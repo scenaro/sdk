@@ -1,0 +1,65 @@
+{
+  "name": "@scenaro/sdk",
+  "version": "0.3.0",
+  "description": "Scenaro SDK — protocol, client, and React hooks for voice experiences over a realtime transport (LiveKit today)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scenaro/sdk.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "prepublishOnly": "pnpm run build && pnpm run test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@livekit/components-react": ">=2.0.0",
+    "livekit-client": ">=2.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@livekit/components-react": "^2.9.20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9.32.0",
+    "livekit-client": "^2.9.20",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.38.0",
+    "vitest": "^2.1.5"
+  },
+  "keywords": ["scenaro", "voice", "sdk", "transport", "livekit"],
+  "license": "MIT"
+}
