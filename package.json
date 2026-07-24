@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/scenaro/sdk.git"
+    "url": "git+https://github.com/scenaro/sdk.git"
   },
   "publishConfig": {
     "access": "public"
@@ -34,7 +34,9 @@
       "import": "./dist/livekit/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -64,6 +66,12 @@
     "typescript-eslint": "^8.38.0",
     "vitest": "^2.1.5"
   },
-  "keywords": ["scenaro", "voice", "sdk", "transport", "livekit"],
+  "keywords": [
+    "scenaro",
+    "voice",
+    "sdk",
+    "transport",
+    "livekit"
+  ],
   "license": "MIT"
 }
