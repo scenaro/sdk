@@ -1,4 +1,9 @@
-# @scenaro/sdk
+# @scenaro/sdk (JavaScript / TypeScript)
+
+> Located under [`projects/sdk/js`](../) as part of the multi-language SDK layout
+> (`sdk/js`, `sdk/flutter`). npm package name remains `@scenaro/sdk`.
+
+Headless session + React bindings for Scenaro voice experiences.
 
 Voice AI sessions for the web — session lifecycle, auth, frontend tools, and feature runtime,
 built on a realtime transport (LiveKit today).
@@ -59,8 +64,29 @@ await session.start({ scenario: 'your-publication-uuid' });
 |--------|---------|
 | `@scenaro/sdk` | `ScenaroSession` (headless), client, protocol — framework-agnostic |
 | `@scenaro/sdk/react` | `ScenaroProvider`, `useScenaroSession`, `FeatureProvider` |
-| `@scenaro/sdk/client` | `createScenaroClient`, JWT, session storage |
+| `@scenaro/sdk/client` | Client, auth, collections, buckets, memories, conversations, advanced search |
 | `@scenaro/sdk/protocol` | Data-channel topics, message types, RPC contracts |
+| `@scenaro/sdk/livekit` | LiveKit room helpers for events, state and session controls |
+
+## Application resources
+
+After `identifyUser`, resource helpers reuse and refresh the application JWT:
+
+```ts
+import {
+  createScenaroClient,
+  listConversations,
+  listMemories,
+  getUserBucket,
+} from '@scenaro/sdk/client';
+
+const client = createScenaroClient({ apiUrl: 'https://api.scenaro.io' });
+await client.identifyUser(publicationUuid);
+
+const conversations = await listConversations(client);
+const memories = await listMemories(client);
+const planning = await getUserBucket(client, 39, client.getSessionApplicationId()!);
+```
 
 ## Advanced: Transport extensions
 

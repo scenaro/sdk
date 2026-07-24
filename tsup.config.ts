@@ -6,6 +6,7 @@ export default defineConfig({
     'protocol/index': 'src/protocol/index.ts',
     'client/index': 'src/client/index.ts',
     'react/index': 'src/react/index.ts',
+    'livekit/index': 'src/transport/livekit/index.ts',
   },
   format: ['esm'],
   dts: true,

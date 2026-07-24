@@ -25,12 +25,29 @@ export interface ScenaroClientConfig {
   apiPathPrefix?: string;
 }
 
-interface ApiFetchOptions {
-  method?: string;
+export type ScenaroHttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+export interface ScenaroRequestOptions {
+  method?: ScenaroHttpMethod;
   body?: unknown;
+  query?: Record<string, string | number | boolean | null | undefined>;
   requiresAuth?: boolean;
+  refreshToken?: boolean;
   scenarioUUID?: string | null;
   applicationId?: number | null;
+  headers?: Record<string, string>;
+}
+
+export class ScenaroApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(status: number, message: string, body?: unknown) {
+    super(message);
+    this.name = 'ScenaroApiError';
+    this.status = status;
+    this.body = body;
+  }
 }
 
 export class ScenaroClient {
@@ -46,32 +63,65 @@ export class ScenaroClient {
     this.apiPathPrefix = config.apiPathPrefix ?? '/v1';
   }
 
-  private async apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
-    const { requiresAuth = true, scenarioUUID = null, applicationId = null, ...fetchOptions } = options;
-    const token = getUserToken(this.storage, this.keys, scenarioUUID, applicationId);
+  async request<T>(endpoint: string, options: ScenaroRequestOptions = {}): Promise<T> {
+    const {
+      requiresAuth = true,
+      refreshToken = requiresAuth,
+      scenarioUUID = null,
+      applicationId = null,
+      query,
+      headers: extraHeaders,
+      method = 'GET',
+      body,
+    } = options;
+
+    if (!endpoint.startsWith('/')) {
+      throw new TypeError('ScenaroClient.request endpoint must start with "/"');
+    }
+
+    const token = requiresAuth && refreshToken
+      ? await this.getValidUserToken()
+      : getUserToken(this.storage, this.keys, scenarioUUID, applicationId);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(fetchOptions as { headers?: Record<string, string> }).headers,
+      ...extraHeaders,
     };
 
-    if (requiresAuth && token) {
+    if (requiresAuth && !token) {
+      throw new ScenaroApiError(401, 'Not authenticated');
+    }
+    if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${this.apiUrl}${this.apiPathPrefix}${endpoint}`, {
-      method: fetchOptions.method || 'GET',
+    const url = new URL(`${this.apiUrl}${this.apiPathPrefix}${endpoint}`);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== null && value !== undefined) {
+        url.searchParams.set(key, String(value));
+      }
+    }
+
+    const response = await fetch(url, {
+      method,
       headers,
-      ...(fetchOptions.body ? { body: JSON.stringify(fetchOptions.body) } : {}),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
 
     if (response.status === 204) {
       return { success: true } as T;
     }
 
-    const data = await response.json();
+    const contentType = response.headers.get('content-type') ?? '';
+    const data: unknown = contentType.includes('application/json')
+      ? await response.json()
+      : await response.text();
     if (!response.ok) {
-      throw new Error((data as { error?: string }).error || `Request failed with status ${response.status}`);
+      const message =
+        typeof data === 'object' && data !== null && 'error' in data
+          ? String((data as { error: unknown }).error)
+          : `Request failed with status ${response.status}`;
+      throw new ScenaroApiError(response.status, message, data);
     }
     return data as T;
   }
@@ -111,7 +161,7 @@ export class ScenaroClient {
       scenario_uuid: scenarioUUID,
     };
 
-    const response = await this.apiFetch<PublicTokenResponse>('/public/token', {
+    const response = await this.request<PublicTokenResponse>('/public/token', {
       method: 'POST',
       body,
       requiresAuth: false,
@@ -163,10 +213,11 @@ export class ScenaroClient {
       body.metadata = sessionOptions.metadata;
     }
 
-    return this.apiFetch<PublicSessionResponse>('/public/session', {
+    return this.request<PublicSessionResponse>('/public/session', {
       method: 'POST',
       body,
       requiresAuth: true,
+      refreshToken: false,
       scenarioUUID,
       applicationId,
     });

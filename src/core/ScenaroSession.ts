@@ -25,6 +25,12 @@ const AGENT_DISCONNECT_GRACE_MS = 2000;
 
 const KNOWN_AGENT_STATES = new Set<AgentState>(['idle', 'listening', 'thinking', 'speaking']);
 
+export type ScenarioEventBehavior = 'silent' | 'sequential' | 'interrupt';
+
+function makeClientEventId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function toAgentState(raw: string | null): AgentState {
   return raw && KNOWN_AGENT_STATES.has(raw as AgentState) ? (raw as AgentState) : 'idle';
 }
@@ -167,6 +173,14 @@ export class ScenaroSession {
         sessionOptions: { resumeConversationId, metadata },
       });
 
+      if (!session?.livekit_url || !session?.livekit_token) {
+        throw new ScenaroError(
+          'SESSION_START_FAILED',
+          'Session response missing livekit_url/livekit_token (expected POST /v1/public/session after identify)',
+          session,
+        );
+      }
+
       // Re-registering a tool name without unregistering first throws at the transport level —
       // guard restart-after-end (or start() called twice) from crashing on stale registrations.
       this.unregisterTools();
@@ -182,6 +196,7 @@ export class ScenaroSession {
       this.setStatus('connected');
     } catch (error) {
       this.setStatus('idle');
+      if (error instanceof ScenaroError) throw error;
       throw new ScenaroError('SESSION_START_FAILED', 'Failed to start session', error);
     }
   }
@@ -211,6 +226,63 @@ export class ScenaroSession {
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
     await this.guarded('MIC_PERMISSION_DENIED', 'Failed to toggle microphone', () =>
       this.transport.setMicrophoneEnabled(enabled),
+    );
+  }
+
+  async fireEvent(options: {
+    featureName: string;
+    eventName: string;
+    data?: Record<string, unknown>;
+    behavior?: ScenarioEventBehavior;
+  }): Promise<void> {
+    const payload: Record<string, unknown> = {
+      feature_name: options.featureName,
+      event_name: options.eventName,
+      data: options.data ?? {},
+      fired_at: new Date().toISOString(),
+      client_event_id: makeClientEventId('evt'),
+    };
+    if (options.behavior) payload.behavior = options.behavior;
+    await this.guarded('CONNECTION_LOST', 'Failed to fire scenario event', () =>
+      this.transport.publishData(DATA_TOPICS.EVENT_FIRE, payload),
+    );
+  }
+
+  async updateExperienceState(experienceState: Record<string, unknown>): Promise<void> {
+    await this.guarded('CONNECTION_LOST', 'Failed to update experience state', () =>
+      this.transport.publishData(DATA_TOPICS.STATE_UPDATE, {
+        experience_state: experienceState,
+        fired_at: new Date().toISOString(),
+        client_event_id: makeClientEventId('state'),
+      }),
+    );
+  }
+
+  async setSessionControl(options: {
+    discreteMode?: boolean;
+    dictationMode?: boolean;
+    manualAudio?: boolean;
+    outputAudio?: boolean;
+  }): Promise<void> {
+    const payload: Record<string, unknown> = {
+      fired_at: new Date().toISOString(),
+      client_event_id: makeClientEventId('session'),
+    };
+    if (options.discreteMode !== undefined) payload.discrete_mode = options.discreteMode;
+    if (options.dictationMode !== undefined) payload.dictation_mode = options.dictationMode;
+    if (options.manualAudio !== undefined) payload.manual_audio = options.manualAudio;
+    if (options.outputAudio !== undefined) payload.output_audio = options.outputAudio;
+    await this.guarded('CONNECTION_LOST', 'Failed to update session control', () =>
+      this.transport.publishData(DATA_TOPICS.SESSION_CONTROL, payload),
+    );
+  }
+
+  async interruptAssistant(): Promise<void> {
+    await this.guarded('CONNECTION_LOST', 'Failed to interrupt assistant', () =>
+      this.transport.publishData(DATA_TOPICS.ASSISTANT_INTERRUPT, {
+        fired_at: new Date().toISOString(),
+        client_event_id: makeClientEventId('interrupt'),
+      }),
     );
   }
 

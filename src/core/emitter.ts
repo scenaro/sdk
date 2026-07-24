@@ -24,8 +24,4 @@ export class TypedEmitter<TEvents> {
       }
     });
   }
-
-  clear(): void {
-    this.listeners.clear();
-  }
 }

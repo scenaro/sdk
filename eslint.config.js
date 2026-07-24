@@ -21,8 +21,7 @@ export default tseslint.config(
   },
   {
     // Transport boundary: everything except src/transport/livekit/ must go through the
-    // internal Transport interface. src/react/legacy/ is exempt: it predates the boundary
-    // and is deprecated for removal in 0.3.0 (see SDK-interface-proposal.md).
+    // internal Transport interface.
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/transport/livekit/**', 'src/react/feature-runtime/useFeatureToolRpc.ts'],
     rules: {

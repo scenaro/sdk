@@ -7,4 +7,4 @@ export * from './protocol';
 export * from './client';
 export * from './core';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
