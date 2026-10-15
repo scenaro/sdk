@@ -65,7 +65,7 @@ export class LiveKitTransport implements Transport {
 
   async publishData(topic: string, data: Record<string, unknown>): Promise<void> {
     const payload = new TextEncoder().encode(JSON.stringify(data));
-    await this.room.localParticipant.publishData(payload, { topic });
+    await this.room.localParticipant.publishData(payload, { topic, reliable:true });
   }
 
   registerToolHandler(name: string, handler: TransportToolRpcHandler): void {

@@ -18,6 +18,8 @@ export interface SessionStoreKeys {
   externalId: string;
   scenarioUuid: string;
   sessionPrefix: string;
+  /** Maps publication UUID → application_id for multi-app coexistence. */
+  scenarioAppPrefix: string;
 }
 
 export function buildStorageKeys(prefix = ''): SessionStoreKeys {
@@ -29,6 +31,7 @@ export function buildStorageKeys(prefix = ''): SessionStoreKeys {
     externalId: `${p}scenaro_external_id`,
     scenarioUuid: `${p}scenaro_scenario_uuid`,
     sessionPrefix: `${p}scenaro_session:`,
+    scenarioAppPrefix: `${p}scenaro_scenario_app:`,
   };
 }
 
@@ -46,6 +49,14 @@ export function getScenarioSessionKey(prefix: string, scenarioUUID: string): str
 
 export function getAppSessionKey(prefix: string, applicationId: number | string): string {
   return `${prefix}${APP_SESSION_PREFIX_SUFFIX}${applicationId}`;
+}
+
+export function getScenarioAppMapKey(prefix: string, scenarioUUID: string): string {
+  return `${prefix}${scenarioUUID}`;
+}
+
+export function newGuestExternalId(): string {
+  return `guest-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 export interface SessionBlob {
@@ -162,10 +173,36 @@ function migrateLegacyScenarioBlob(
       getAppSessionKey(keys.sessionPrefix, legacy.application_id),
       identity,
     );
+    setScenarioApplicationId(storage, keys, scenarioUUID, legacy.application_id);
   }
 
   storage.removeItem(getScenarioSessionKey(keys.sessionPrefix, scenarioUUID));
   return legacy;
+}
+
+export function getScenarioApplicationId(
+  storage: StorageAdapter | null,
+  keys: SessionStoreKeys,
+  scenarioUUID: string | null | undefined,
+): number | null {
+  if (!storage || !scenarioUUID) return null;
+  const raw = storage.getItem(getScenarioAppMapKey(keys.scenarioAppPrefix, scenarioUUID));
+  if (!raw) return null;
+  const applicationId = parseInt(raw, 10);
+  return Number.isFinite(applicationId) && applicationId > 0 ? applicationId : null;
+}
+
+export function setScenarioApplicationId(
+  storage: StorageAdapter | null,
+  keys: SessionStoreKeys,
+  scenarioUUID: string | null | undefined,
+  applicationId: number,
+): void {
+  if (!storage || !scenarioUUID || !(applicationId > 0)) return;
+  storage.setItem(
+    getScenarioAppMapKey(keys.scenarioAppPrefix, scenarioUUID),
+    String(applicationId),
+  );
 }
 
 /** Canonical app-scoped session (source of truth). */
@@ -193,12 +230,20 @@ export function getAppSession(
       );
     }
 
+    const mappedAppId = getScenarioApplicationId(storage, keys, scenarioUUID);
+    if (mappedAppId) {
+      return readJsonSession(storage, getAppSessionKey(keys.sessionPrefix, mappedAppId));
+    }
+
     const activeScenario = storage.getItem(keys.scenarioUuid);
     if (activeScenario === scenarioUUID) {
       const appSessions = listAppSessionEntries(storage, keys);
+      // Only safe when a single app session is bound to this scenario pointer.
       if (appSessions.length === 1) return appSessions[0].session;
-      if (appSessions.length > 1) return appSessions[0].session;
     }
+
+    // Do not guess across multi-app localStorage (shared experiences origin).
+    return null;
   }
 
   const appSessions = listAppSessionEntries(storage, keys);
@@ -241,6 +286,9 @@ export function persistIdentity(
   if (scenarioUUID) {
     storage.setItem(keys.scenarioUuid, scenarioUUID);
     storage.removeItem(getScenarioSessionKey(keys.sessionPrefix, scenarioUUID));
+    if (identity.application_id) {
+      setScenarioApplicationId(storage, keys, scenarioUUID, identity.application_id);
+    }
   }
 
   removeFlatKeys(storage, keys);
@@ -263,16 +311,20 @@ export function resolveExternalId(
   keys: SessionStoreKeys,
   scenarioUUID: string | null,
   externalId?: string | null,
+  applicationId?: number | null,
 ): string {
   if (externalId) return externalId;
   if (!storage) {
-    return `guest-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    return newGuestExternalId();
   }
 
-  const session = getAppSession(storage, keys, { scenarioUUID });
+  const session = getAppSession(storage, keys, {
+    applicationId: applicationId ?? null,
+    scenarioUUID: applicationId ? null : scenarioUUID,
+  });
   if (session?.external_id) return session.external_id;
 
-  return `guest-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  return newGuestExternalId();
 }
 
 export function clearSession(
@@ -288,6 +340,7 @@ export function clearSession(
       storage.removeItem(getAppSessionKey(keys.sessionPrefix, session.application_id));
     }
     storage.removeItem(getScenarioSessionKey(keys.sessionPrefix, scenarioUUID));
+    storage.removeItem(getScenarioAppMapKey(keys.scenarioAppPrefix, scenarioUUID));
     if (storage.getItem(keys.scenarioUuid) === scenarioUUID) {
       storage.removeItem(keys.scenarioUuid);
     }
@@ -303,7 +356,10 @@ export function clearSession(
   const toRemove: string[] = [];
   for (let i = 0; i < storage.length; i += 1) {
     const key = storage.key(i);
-    if (key?.startsWith(keys.sessionPrefix)) toRemove.push(key);
+    if (!key) continue;
+    if (key.startsWith(keys.sessionPrefix) || key.startsWith(keys.scenarioAppPrefix)) {
+      toRemove.push(key);
+    }
   }
   toRemove.forEach((k) => storage.removeItem(k));
 }

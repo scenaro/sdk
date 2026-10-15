@@ -1,7 +1,7 @@
 {
   "name": "@scenaro/sdk",
-  "version": "0.4.0",
-  "description": "Scenaro SDK — protocol, client, and React hooks for voice experiences over a realtime transport (LiveKit today)",
+  "version": "0.4.3",
+  "description": "Scenaro SDK \u2014 protocol, client, and React hooks for voice experiences over a realtime transport (LiveKit today)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -73,5 +73,6 @@
     "transport",
     "livekit"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1"
 }

@@ -12,9 +12,11 @@ import {
   clearSession,
   createBrowserStorage,
   getAppSession,
+  getScenarioApplicationId,
   getUserToken,
   persistIdentity,
   resolveExternalId,
+  setScenarioApplicationId,
   type StorageAdapter,
 } from './auth/session-store';
 
@@ -79,9 +81,13 @@ export class ScenaroClient {
       throw new TypeError('ScenaroClient.request endpoint must start with "/"');
     }
 
-    const token = requiresAuth && refreshToken
-      ? await this.getValidUserToken()
-      : getUserToken(this.storage, this.keys, scenarioUUID, applicationId);
+    // Never attach a leftover Bearer on unauthenticated routes (e.g. POST /public/token).
+    // A stale token from another application breaks subsequent PublicAuth calls.
+    const token = requiresAuth
+      ? refreshToken
+        ? await this.getValidUserToken()
+        : getUserToken(this.storage, this.keys, scenarioUUID, applicationId)
+      : null;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -130,30 +136,39 @@ export class ScenaroClient {
     scenarioUUID: string,
     externalId?: string | null,
   ): Promise<IdentityResponse> {
-    if (scenarioUUID && this.storage) {
-      this.storage.setItem(this.keys.scenarioUuid, scenarioUUID);
+    if (!scenarioUUID) {
+      throw new TypeError('identifyUser requires scenarioUUID');
     }
 
-    const cached = getAppSession(this.storage, this.keys, { scenarioUUID });
+    const applicationId = await this.resolvePublicationApplicationId(scenarioUUID);
 
+    if (this.storage) {
+      this.storage.setItem(this.keys.scenarioUuid, scenarioUUID);
+      setScenarioApplicationId(this.storage, this.keys, scenarioUUID, applicationId);
+    }
+
+    const cached = getAppSession(this.storage, this.keys, { applicationId });
     if (
       cached?.user_token &&
       !isTokenExpired(cached.user_token) &&
       cached.user_id &&
-      cached.application_id
+      cached.application_id === applicationId
     ) {
       return {
         user_token: cached.user_token,
         user_id: cached.user_id,
         application_id: cached.application_id,
+        external_id: cached.external_id,
       };
     }
 
+    // Only reuse this application's guest — never another app's external_id on a shared origin.
     const external_id = resolveExternalId(
       this.storage,
       this.keys,
       scenarioUUID,
       externalId,
+      applicationId,
     );
 
     const body: PublicTokenRequest = {
@@ -169,6 +184,26 @@ export class ScenaroClient {
 
     persistIdentity(this.storage, this.keys, scenarioUUID, response, external_id);
     return response;
+  }
+
+  /**
+   * Resolve publication → application_id so multi-experience localStorage can keep
+   * one token per app without cross-app guest reuse.
+   */
+  async resolvePublicationApplicationId(scenarioUUID: string): Promise<number> {
+    const mapped = getScenarioApplicationId(this.storage, this.keys, scenarioUUID);
+    if (mapped) return mapped;
+
+    const version = await this.request<{ application_id?: number }>(
+      `/public/publications/${encodeURIComponent(scenarioUUID)}/version`,
+      { method: 'GET', requiresAuth: false },
+    );
+    const applicationId = Number(version?.application_id);
+    if (!Number.isFinite(applicationId) || applicationId <= 0) {
+      throw new ScenaroApiError(400, 'invalid input', version);
+    }
+    setScenarioApplicationId(this.storage, this.keys, scenarioUUID, applicationId);
+    return applicationId;
   }
 
   async startSession(
@@ -216,6 +251,155 @@ export class ScenaroClient {
     return this.request<PublicSessionResponse>('/public/session', {
       method: 'POST',
       body,
+      requiresAuth: true,
+      refreshToken: false,
+      scenarioUUID,
+      applicationId,
+    });
+  }
+
+  /**
+   * Join an existing LiveKit room as a companion, display or operator participant.
+   * `operator` requires a user token from `/public/operator/unlock`.
+   */
+  async joinSession(
+    scenarioUUID: string,
+    roomName: string,
+    options: { role?: 'companion' | 'display' | 'operator'; kioskId?: string } = {},
+  ): Promise<PublicSessionResponse> {
+    if (!roomName) {
+      throw new TypeError('joinSession requires roomName');
+    }
+
+    const appSession = getAppSession(this.storage, this.keys, { scenarioUUID });
+    const applicationId = appSession?.application_id ?? null;
+
+    return this.request<PublicSessionResponse>('/public/session/join', {
+      method: 'POST',
+      body: {
+        scenario_uuid: scenarioUUID,
+        room_name: roomName,
+        role: options.role ?? 'companion',
+        kiosk_id: options.kioskId,
+      },
+      requiresAuth: true,
+      refreshToken: false,
+      scenarioUUID,
+      applicationId,
+    });
+  }
+
+  /** Mint a server-owned kiosk channel for wall QR claiming. */
+  async createKioskSession(scenarioUUID: string): Promise<{
+    kiosk_id: string;
+    scenario_uuid: string;
+    display_user_id: number;
+    expires_at: string;
+  }> {
+    const appSession = getAppSession(this.storage, this.keys, { scenarioUUID });
+    const applicationId = appSession?.application_id ?? null;
+    return this.request('/public/kiosk/session', {
+      method: 'POST',
+      body: { scenario_uuid: scenarioUUID },
+      requiresAuth: true,
+      refreshToken: false,
+      scenarioUUID,
+      applicationId,
+    });
+  }
+
+  /**
+   * Unlock a private wall display with an Account JWT.
+   * Persists the returned PublicAuth identity for subsequent kiosk/session calls.
+   */
+  async unlockKioskDisplay(
+    scenarioUUID: string,
+    accountAccessToken: string,
+  ): Promise<{
+    user_token: string;
+    user_id: number;
+    application_id: number;
+    external_id?: string;
+    expires_in: number;
+  }> {
+    const response = await this.request<{
+      user_token: string;
+      user_id: number;
+      application_id: number;
+      external_id?: string;
+      expires_in: number;
+    }>('/public/kiosk/unlock', {
+      method: 'POST',
+      body: { scenario_uuid: scenarioUUID },
+      requiresAuth: false,
+      refreshToken: false,
+      headers: { Authorization: `Bearer ${accountAccessToken}` },
+    });
+    persistIdentity(
+      this.storage,
+      this.keys,
+      scenarioUUID,
+      response,
+      response.external_id ?? `account-${response.user_id}`,
+    );
+    return response;
+  }
+
+  /** Register a phone-started session so the wall kiosk can join as display. */
+  async claimKiosk(
+    kioskId: string,
+    roomName: string,
+    scenarioUUID: string,
+  ): Promise<{
+    kiosk_id: string;
+    room_name: string;
+    scenario_uuid: string;
+    host_user_id: number;
+    expires_at: string;
+  }> {
+    const appSession = getAppSession(this.storage, this.keys, { scenarioUUID });
+    const applicationId = appSession?.application_id ?? null;
+    return this.request('/public/kiosk/claim', {
+      method: 'POST',
+      body: {
+        kiosk_id: kioskId,
+        room_name: roomName,
+        scenario_uuid: scenarioUUID,
+      },
+      requiresAuth: true,
+      refreshToken: false,
+      scenarioUUID,
+      applicationId,
+    });
+  }
+
+  /** Poll pending kiosk session (wall display). No auth required. */
+  async getKioskPending(
+    kioskId: string,
+  ): Promise<{
+    kiosk_id: string;
+    room_name: string;
+    scenario_uuid: string;
+    host_user_id: number;
+    expires_at: string;
+  }> {
+    return this.request(`/public/kiosk/${encodeURIComponent(kioskId)}/pending`, {
+      method: 'GET',
+      requiresAuth: false,
+      refreshToken: false,
+    });
+  }
+
+  /** Release kiosk claim when phone ends the discussion. */
+  async deleteKioskClaim(kioskId: string, scenarioUUID: string): Promise<void> {
+    if (!scenarioUUID) {
+      throw new TypeError('deleteKioskClaim requires scenarioUUID');
+    }
+    const appSession = getAppSession(this.storage, this.keys, { scenarioUUID });
+    const applicationId = appSession?.application_id ?? null;
+    await this.request('/public/kiosk/claim', {
+      method: 'DELETE',
+      query: { kiosk_id: kioskId },
       requiresAuth: true,
       refreshToken: false,
       scenarioUUID,

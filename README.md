@@ -58,6 +58,21 @@ session.on('message', (message) => render(message));
 await session.start({ scenario: 'your-publication-uuid' });
 ```
 
+Pass bootstrap facts with `metadata` — they become LiveKit `session_context` for the
+voice agent (`## Session context` + `<session_context:path>`):
+
+```ts
+await session.start({
+  scenario: 'your-publication-uuid',
+  metadata: {
+    dog: { name: 'Milo', age_years: 3 },
+  },
+});
+```
+
+With React, the same field is available on `useScenaroSession({ metadata })` and
+`start({ metadata })` overrides.
+
 ## Sub-exports
 
 | Import | Purpose |

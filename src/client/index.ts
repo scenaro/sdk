@@ -8,6 +8,7 @@ export {
 } from './ScenaroClient';
 export {
   deleteConversation,
+  deleteMemory,
   deleteUserBucket,
   forkConversation,
   getCollectionItem,

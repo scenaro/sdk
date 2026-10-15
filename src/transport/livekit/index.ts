@@ -1,5 +1,6 @@
 export { LiveKitTransport } from './LiveKitTransport';
 export {
+  exchangeModeFor,
   fireScenarioEvent,
   sendAssistantInterrupt,
   sendExperienceStateUpdate,

@@ -1,5 +1,6 @@
+import { CollectionItemContextManager, type CollectionItemContext } from './collection-item-context';
 import type { ScenaroClient, StorageAdapter } from '../client';
-import { createScenaroClient } from '../client';
+import { createScenaroClient, persistIdentity } from '../client';
 import {
   DATA_TOPICS,
   RPC_TIMEOUTS,
@@ -33,6 +34,28 @@ function makeClientEventId(prefix: string): string {
 
 function toAgentState(raw: string | null): AgentState {
   return raw && KNOWN_AGENT_STATES.has(raw as AgentState) ? (raw as AgentState) : 'idle';
+}
+
+/**
+ * Chrome expires transient user activation after ~5s and after network awaits.
+ * Voice start must call getUserMedia *before* identify/session, or incognito
+ * (no prior mic grant) fails with NotAllowedError and a generic session error.
+ */
+async function requestMicrophoneAccess(): Promise<void> {
+  const mediaDevices = globalThis.navigator?.mediaDevices;
+  if (!mediaDevices?.getUserMedia) {
+    throw new ScenaroError('MIC_PERMISSION_DENIED', 'Microphone is not available in this browser');
+  }
+  try {
+    const stream = await mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+  } catch (error) {
+    throw new ScenaroError(
+      'MIC_PERMISSION_DENIED',
+      'Microphone permission is required for voice mode',
+      error,
+    );
+  }
 }
 
 function findToolSettings(rawConfig: ConfigPayload | null, toolName: string): Record<string, unknown> {
@@ -73,6 +96,7 @@ export interface ScenaroSessionOptions {
 }
 
 export class ScenaroSession {
+  private readonly itemContext: CollectionItemContextManager;
   private readonly client: ScenaroClient;
   private readonly transport: Transport;
   private readonly emitter = new TypedEmitter<ScenaroSessionEvents>();
@@ -87,6 +111,7 @@ export class ScenaroSession {
   /** Wire payload backing `_config` — kept for tool-context resolution only, never exposed publicly. */
   private _rawConfig: ConfigPayload | null = null;
   private _conversationId: string | null = null;
+  private _suppressRecap = false;
 
   constructor(options: ScenaroSessionOptions = {}) {
     if (!options.client && !options.apiUrl) {
@@ -101,6 +126,7 @@ export class ScenaroSession {
         storagePrefix: options.storagePrefix,
       });
     this.transport = options.transport ?? new LiveKitTransport();
+    this.itemContext = new CollectionItemContextManager(this.client,(topic,data)=>this.transport.publishData(topic,data),error=>this.emitter.emit('error',new ScenaroError('CONNECTION_LOST','Item preloading failed',error)));
     this.bindTransport();
   }
 
@@ -151,46 +177,94 @@ export class ScenaroSession {
       microphone = true,
       externalId = null,
       resumeConversationId,
+      suppressRecap = false,
       metadata,
       tools = {},
+      connection,
     } = options;
+
+    this._suppressRecap = suppressRecap;
+    const wantsMicrophone = inputMode === 'audio' && microphone;
+    if (wantsMicrophone) {
+      await requestMicrophoneAccess();
+    }
 
     this.setStatus('connecting');
 
     try {
-      await this.client.identifyUser(scenario, externalId);
-    } catch (error) {
-      const scenaroError = new ScenaroError('IDENTIFY_FAILED', 'Failed to identify user', error);
-      this.setStatus('idle');
-      throw scenaroError;
-    }
+      let livekitUrl: string;
+      let livekitToken: string;
 
-    try {
-      const session = await this.client.startSession(scenario, {
-        inputMode,
-        outputMode,
-        language,
-        sessionOptions: { resumeConversationId, metadata },
-      });
+      if (connection?.livekitUrl && connection?.livekitToken) {
+        livekitUrl = connection.livekitUrl;
+        livekitToken = connection.livekitToken;
+        if (connection.conversationId) {
+          this._conversationId = connection.conversationId;
+        }
+        if (
+          connection.userToken &&
+          typeof connection.userId === 'number' &&
+          typeof connection.applicationId === 'number' &&
+          connection.applicationId > 0
+        ) {
+          persistIdentity(
+            this.client.storage,
+            this.client.keys,
+            scenario,
+            {
+              user_token: connection.userToken,
+              user_id: connection.userId,
+              application_id: connection.applicationId,
+              external_id: connection.externalId,
+            },
+            connection.externalId,
+          );
+        }
+      } else {
+        try {
+          await this.client.identifyUser(scenario, externalId);
+        } catch (error) {
+          const scenaroError = new ScenaroError('IDENTIFY_FAILED', 'Failed to identify user', error);
+          this.setStatus('idle');
+          throw scenaroError;
+        }
 
-      if (!session?.livekit_url || !session?.livekit_token) {
-        throw new ScenaroError(
-          'SESSION_START_FAILED',
-          'Session response missing livekit_url/livekit_token (expected POST /v1/public/session after identify)',
-          session,
-        );
+        const session = await this.client.startSession(scenario, {
+          inputMode,
+          outputMode,
+          language,
+          sessionOptions: { resumeConversationId, metadata },
+        });
+
+        if (!session?.livekit_url || !session?.livekit_token) {
+          throw new ScenaroError(
+            'SESSION_START_FAILED',
+            'Session response missing livekit_url/livekit_token (expected POST /v1/public/session after identify)',
+            session,
+          );
+        }
+        livekitUrl = session.livekit_url;
+        livekitToken = session.livekit_token;
       }
 
       // Re-registering a tool name without unregistering first throws at the transport level —
       // guard restart-after-end (or start() called twice) from crashing on stale registrations.
       this.unregisterTools();
       this.registerTools(tools);
-      await this.transport.connect(session.livekit_url, session.livekit_token);
+      await this.transport.connect(livekitUrl, livekitToken);
 
       void this.transport.publishData(DATA_TOPICS.CONFIG_REQUEST, { requestedAt: Date.now() });
 
-      if (inputMode === 'audio' && microphone) {
-        await this.transport.setMicrophoneEnabled(true);
+      if (wantsMicrophone) {
+        try {
+          await this.transport.setMicrophoneEnabled(true);
+        } catch (error) {
+          throw new ScenaroError(
+            'MIC_PERMISSION_DENIED',
+            'Microphone permission is required for voice mode',
+            error,
+          );
+        }
       }
 
       this.setStatus('connected');
@@ -204,11 +278,13 @@ export class ScenaroSession {
   async end(): Promise<void> {
     this.unregisterTools();
     await this.transport.disconnect();
+    this.itemContext.clear();
     this.setStatus('ended');
   }
 
   /** Releases transport listeners and timers. Call when the owning provider unmounts. */
   destroy(): void {
+    this.itemContext.clear();
     this.transportUnsubscribers.forEach((unsubscribe) => unsubscribe());
     this.transportUnsubscribers.length = 0;
     if (this.agentDisconnectTimer) {
@@ -248,6 +324,8 @@ export class ScenaroSession {
     );
   }
 
+  async updateCollectionItemContext(context: CollectionItemContext): Promise<void> {await this.itemContext.update(context)}
+
   async updateExperienceState(experienceState: Record<string, unknown>): Promise<void> {
     await this.guarded('CONNECTION_LOST', 'Failed to update experience state', () =>
       this.transport.publishData(DATA_TOPICS.STATE_UPDATE, {
@@ -263,6 +341,9 @@ export class ScenaroSession {
     dictationMode?: boolean;
     manualAudio?: boolean;
     outputAudio?: boolean;
+    listenOnly?: boolean;
+    exchangeMode?: 'voice' | 'hybrid' | 'text' | 'audio_text';
+    handoff?: 'mode_switch';
   }): Promise<void> {
     const payload: Record<string, unknown> = {
       fired_at: new Date().toISOString(),
@@ -272,6 +353,9 @@ export class ScenaroSession {
     if (options.dictationMode !== undefined) payload.dictation_mode = options.dictationMode;
     if (options.manualAudio !== undefined) payload.manual_audio = options.manualAudio;
     if (options.outputAudio !== undefined) payload.output_audio = options.outputAudio;
+    if (options.listenOnly !== undefined) payload.listen_only = options.listenOnly;
+    if (options.exchangeMode !== undefined) payload.exchange_mode = options.exchangeMode;
+    if (options.handoff !== undefined) payload.handoff = options.handoff;
     await this.guarded('CONNECTION_LOST', 'Failed to update session control', () =>
       this.transport.publishData(DATA_TOPICS.SESSION_CONTROL, payload),
     );
@@ -392,13 +476,19 @@ export class ScenaroSession {
       this.transport.onAgentStateChange((raw) => this.setAgentState(toAgentState(raw))),
       this.transport.onAgentPresenceChange((present) => this.handleAgentPresenceChange(present)),
       this.transport.onConnectionStateChange((state) => {
-        if (state === 'disconnected' && this._status === 'connected') {
+        if (state === 'disconnected' && (this._status === 'connected' || this._status === 'reconnecting')) {
           this._config = null;
           this._rawConfig = null;
-          this.setStatus('ended');
+          this.itemContext.clear();
+    this.setStatus('ended');
           this.emitter.emit('session-end', { reason: 'transport_disconnected' });
         }
         if (state === 'reconnecting') this.setStatus('reconnecting');
+        if (state === 'connected' && this._status === 'reconnecting') {
+          this.setStatus('connected');
+          void this.itemContext.resync().catch(error => this.emitter.emit('error', new ScenaroError('CONNECTION_LOST', 'Item resynchronization failed', error)));
+          void this.transport.publishData(DATA_TOPICS.CONFIG_REQUEST, { requestedAt: Date.now() });
+        }
       }),
     );
   }
@@ -413,7 +503,8 @@ export class ScenaroSession {
     this.agentDisconnectTimer = setTimeout(() => {
       this.agentDisconnectTimer = null;
       if (this._status !== 'connected') return;
-      this.setStatus('ended');
+      this.itemContext.clear();
+    this.setStatus('ended');
       this.emitter.emit('session-end', { reason: 'agent_disconnected' });
     }, AGENT_DISCONNECT_GRACE_MS);
   }
@@ -421,6 +512,8 @@ export class ScenaroSession {
   private handleDataMessage(topic: string, payload: Uint8Array): void {
     if (!topic) return;
 
+    if (topic === 'items:ack') {const ack=this.decodeJson<{cached?:Record<string,string>;sequence?:number}>(payload);if(ack)this.itemContext.acknowledge(ack);return}
+    if (topic === 'items:need') {const request=this.decodeJson<{collection_id?:number;collection_ids?:number[];ids:string[]}>(payload);if(request)void this.itemContext.need(request.ids,request.collection_ids??(request.collection_id?[request.collection_id]:undefined));return}
     if (topic === DATA_TOPICS.MESSAGE_NEW) {
       const message = this.decodeJson<ConversationMessage>(payload);
       if (!message) return;
@@ -432,7 +525,8 @@ export class ScenaroSession {
 
     if (topic === DATA_TOPICS.SESSION_END) {
       const info = this.decodeJson<{ reason?: string }>(payload) ?? {};
-      this.setStatus('ended');
+      this.itemContext.clear();
+    this.setStatus('ended');
       this.emitter.emit('session-end', { reason: info.reason ?? 'shutdown' });
       return;
     }
@@ -440,8 +534,13 @@ export class ScenaroSession {
     if (topic === DATA_TOPICS.CONFIG) {
       const rawConfig = this.decodeJson<ConfigPayload>(payload);
       if (!rawConfig) return;
-      void this.transport.publishData(DATA_TOPICS.CONFIG_ACK, { acknowledged: true, timestamp: Date.now() });
+      void this.transport.publishData(DATA_TOPICS.CONFIG_ACK, {
+        acknowledged: true,
+        timestamp: Date.now(),
+        ...(this._suppressRecap ? { suppress_recap: true } : {}),
+      });
       this._rawConfig = rawConfig;
+      if(rawConfig.item_context?.enabled&&rawConfig.company_id)void this.itemContext.configure(rawConfig.company_id,rawConfig.item_context.collection_ids??(rawConfig.item_context.collection_id?[rawConfig.item_context.collection_id]:[])).catch(error=>this.emitter.emit('error',new ScenaroError('CONNECTION_LOST','Item synchronization failed',error)));
       this._config = toPublicConfig(rawConfig);
       if (rawConfig.conversation_id) this._conversationId = rawConfig.conversation_id;
       this.emitter.emit('config', this._config);

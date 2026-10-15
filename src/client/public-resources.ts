@@ -8,6 +8,7 @@ export interface PaginationOptions {
 }
 
 export interface CollectionItemsOptions extends PaginationOptions {
+  agentContext?: boolean;
   query?: string;
   searchMode?: string;
   searchField?: string;
@@ -105,6 +106,7 @@ export async function listCollectionItems<T = JsonObject>(
   options: CollectionItemsOptions = {},
 ): Promise<{ data: T[]; [key: string]: unknown }> {
   const {
+    agentContext = false,
     offset = 0,
     limit = 10,
     query,
@@ -116,6 +118,7 @@ export async function listCollectionItems<T = JsonObject>(
   } = options;
   return client.request(`/public/companies/${companyId}/collections/${collectionId}/items`, {
     query: {
+      agent_context: agentContext || undefined,
       offset,
       limit,
       q: query || undefined,
@@ -187,12 +190,26 @@ export async function listMemories<T extends PublicUserMemory = PublicUserMemory
   return unwrapArray<T>(response);
 }
 
+export async function deleteMemory(
+  client: ScenaroClient,
+  memoryId: number | string,
+): Promise<boolean> {
+  await client.request(`/public/memories/${encodeURIComponent(String(memoryId))}`, {
+    method: 'DELETE',
+  });
+  return true;
+}
+
 export async function listConversations<T extends PublicConversation = PublicConversation>(
   client: ScenaroClient,
-  { limit = 10, offset = 0 }: PaginationOptions = {},
+  { limit = 10, offset = 0, scenarioUuid }: PaginationOptions & { scenarioUuid?: string } = {},
 ): Promise<T[]> {
   const response = await client.request<unknown>('/public/conversations', {
-    query: { limit: clamp(limit, 1, 50), offset: offset > 0 ? offset : undefined },
+    query: {
+      limit: clamp(limit, 1, 50),
+      offset: offset > 0 ? offset : undefined,
+      scenario_uuid: scenarioUuid || undefined,
+    },
   });
   return unwrapArray<T>(response);
 }

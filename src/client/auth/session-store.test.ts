@@ -139,4 +139,57 @@ describe('session-store', () => {
     expect(storage.get(`${keys.sessionPrefix}app:42`)).toBeUndefined();
     expect(storage.get(keys.scenarioUuid)).toBeUndefined();
   });
+
+  it('does not reuse another app session when scenario pointer is missing', () => {
+    const { storage, adapter } = createMemoryStorage();
+    const keys = buildStorageKeys('');
+    persistIdentity(adapter, keys, 'shaka-pub', {
+      user_token: 'tok-shaka',
+      user_id: 2439,
+      application_id: 38,
+      external_id: 'guest-shaka',
+    });
+    storage.delete(keys.scenarioUuid);
+
+    expect(getAppSession(adapter, keys, { scenarioUUID: 'urbansider-pub' })).toBeNull();
+    expect(resolveExternalId(adapter, keys, 'urbansider-pub')).not.toBe('guest-shaka');
+  });
+
+  it('does not reuse another app session when scenario pointer differs', () => {
+    const { adapter } = createMemoryStorage();
+    const keys = buildStorageKeys('');
+    persistIdentity(adapter, keys, 'shaka-pub', {
+      user_token: 'tok-shaka',
+      user_id: 2439,
+      application_id: 38,
+      external_id: 'guest-shaka',
+    });
+
+    expect(getAppSession(adapter, keys, { scenarioUUID: 'urbansider-pub' })).toBeNull();
+  });
+
+  it('keeps both app sessions and maps scenario to application', () => {
+    const { storage, adapter } = createMemoryStorage();
+    const keys = buildStorageKeys('');
+    persistIdentity(adapter, keys, 'shaka-pub', {
+      user_token: 'tok-shaka',
+      user_id: 1,
+      application_id: 38,
+      external_id: 'guest-shaka',
+    });
+    persistIdentity(adapter, keys, 'urban-pub', {
+      user_token: 'tok-urban',
+      user_id: 2,
+      application_id: 35,
+      external_id: 'guest-urban',
+    });
+
+    expect(storage.get(`${keys.sessionPrefix}app:38`)).toContain('guest-shaka');
+    expect(storage.get(`${keys.sessionPrefix}app:35`)).toContain('guest-urban');
+    expect(storage.get(`${keys.scenarioAppPrefix}shaka-pub`)).toBe('38');
+    expect(storage.get(`${keys.scenarioAppPrefix}urban-pub`)).toBe('35');
+    expect(getAppSession(adapter, keys, { scenarioUUID: 'shaka-pub' })?.external_id)
+      .toBe('guest-shaka');
+    expect(resolveExternalId(adapter, keys, 'urban-pub', null, 35)).toBe('guest-urban');
+  });
 });

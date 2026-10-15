@@ -48,6 +48,7 @@ export interface Collection {
 }
 
 export interface ConfigPayload {
+  item_context?: {enabled:boolean;collection_id?:number;collection_ids?:number[]};
   type?: 'config';
   features?: FeatureDefinition[];
   collections?: Collection[];
@@ -87,7 +88,7 @@ export interface ConversationMessage {
   conversation_id?: string;
   parent_message_id?: string | null;
   scenario_version_id?: string;
-  role: 'user' | 'assistant' | 'tool' | 'event' | string;
+  role: 'user' | 'assistant' | 'tool' | 'event' | 'trace' | string;
   content: string;
   timestamp: string;
   interrupted?: boolean;
@@ -95,6 +96,8 @@ export interface ConversationMessage {
   tool_call_id?: string;
   name?: string;
   event_metadata?: Record<string, unknown>;
+  /** Reporting payload for role="trace". Not part of the assistant context. */
+  trace_metadata?: { kind: string; data?: Record<string, unknown> };
   experience_state?: Record<string, unknown>;
 }
 
@@ -131,6 +134,7 @@ export interface PublicSessionResponse {
   livekit_token: string;
   livekit_url: string;
   expires_in: number;
+  room_name?: string;
 }
 
 export interface IdentityResponse {

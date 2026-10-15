@@ -47,6 +47,16 @@ export function sendExperienceStateUpdate(
   });
 }
 
+export function exchangeModeFor(
+  inputMode: string,
+  outputMode: string,
+): 'voice' | 'hybrid' | 'text' | 'audio_text' {
+  if (inputMode === 'text' && outputMode === 'audio') return 'hybrid';
+  if (inputMode === 'text') return 'text';
+  if (outputMode === 'text') return 'audio_text';
+  return 'voice';
+}
+
 export function sendSessionControl(
   room: Room,
   options: {
@@ -54,6 +64,9 @@ export function sendSessionControl(
     dictationMode?: boolean;
     manualAudio?: boolean;
     outputAudio?: boolean;
+    listenOnly?: boolean;
+    exchangeMode?: 'voice' | 'hybrid' | 'text' | 'audio_text';
+    handoff?: 'mode_switch';
   } = {},
 ): Promise<boolean> {
   return publish(room, DATA_TOPICS.SESSION_CONTROL, {
@@ -71,6 +84,13 @@ export function sendSessionControl(
     ...(options.outputAudio !== undefined
       ? { output_audio: options.outputAudio }
       : {}),
+    ...(options.listenOnly !== undefined
+      ? { listen_only: options.listenOnly }
+      : {}),
+    ...(options.exchangeMode !== undefined
+      ? { exchange_mode: options.exchangeMode }
+      : {}),
+    ...(options.handoff !== undefined ? { handoff: options.handoff } : {}),
   });
 }
 

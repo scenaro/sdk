@@ -19,3 +19,6 @@ export type {
 } from './feature-runtime';
 export type { UseScenaroSessionOptions, UseScenaroSessionReturn } from './useScenaroSession';
 export type { ScenaroProviderProps, ScenaroProviderValue } from './ScenaroProvider';
+
+export type { CollectionItemContext, ContextCollectionItem, AgentItemEnvelope } from '../core/collection-item-context';
+export { useCollectionItemContext } from './useCollectionItemContext';

@@ -44,8 +44,31 @@ export interface StartSessionOptions {
   microphone?: boolean;
   externalId?: string | null;
   resumeConversationId?: string;
+  /** Mode-switch reconnect: the next config ack asks the agent not to treat this as a return. */
+  suppressRecap?: boolean;
   metadata?: Record<string, unknown>;
   tools?: Record<string, ToolHandler>;
+  /**
+   * Backend-minted Transport credentials. When set, `start()` skips
+   * `identifyUser` + `POST /public/session` and connects directly.
+   * Use after your server called `/applications/:id/token` (+ optional
+   * `/public/session`) — never put an application API key in the client.
+   */
+  connection?: SessionConnectionCredentials;
+}
+
+/** LiveKit (Transport) credentials minted server-side. */
+export interface SessionConnectionCredentials {
+  livekitUrl: string;
+  livekitToken: string;
+  /** Optional Scenaro user JWT for subsequent public API calls. */
+  userToken?: string;
+  conversationId?: string;
+  /** Scenaro user id — with applicationId, enables persistIdentity. */
+  userId?: number;
+  /** Scenaro application id — required to store identity under the app key. */
+  applicationId?: number;
+  externalId?: string;
 }
 
 export interface SessionEndInfo {

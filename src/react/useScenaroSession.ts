@@ -34,6 +34,15 @@ export interface UseScenaroSessionReturn {
   end: () => Promise<void>;
   sendText: (text: string) => Promise<void>;
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
+  setSessionControl: (options: {
+    discreteMode?: boolean;
+    dictationMode?: boolean;
+    manualAudio?: boolean;
+    outputAudio?: boolean;
+    listenOnly?: boolean;
+    exchangeMode?: 'voice' | 'hybrid' | 'text' | 'audio_text';
+    handoff?: 'mode_switch';
+  }) => Promise<void>;
   /** Extension LiveKit — non-portable, see docs/guides/advanced-livekit-integration. */
   room: Room | null;
 }
@@ -112,6 +121,10 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
   const end = useCallback(() => session.end(), [session]);
   const sendText = useCallback((text: string) => session.sendText(text), [session]);
   const setMicrophoneEnabled = useCallback((enabled: boolean) => session.setMicrophoneEnabled(enabled), [session]);
+  const setSessionControl = useCallback(
+    (options: Parameters<UseScenaroSessionReturn['setSessionControl']>[0]) => session.setSessionControl(options),
+    [session],
+  );
 
   return {
     status,
@@ -125,6 +138,7 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
     end,
     sendText,
     setMicrophoneEnabled,
+    setSessionControl,
     room: (session.room as Room | null) ?? null,
   };
 }
