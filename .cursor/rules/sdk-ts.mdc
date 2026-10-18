@@ -1,0 +1,8 @@
+---
+description: Conventions for @scenaro/sdk
+globs: "src/**/*.{ts,tsx}"
+---
+
+- Keep protocol types shared and explicit.
+- Run `pnpm run typecheck` and `pnpm test` before opening a PR.
+- Avoid breaking exported APIs without a clear migration note in the PR.
