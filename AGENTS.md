@@ -15,7 +15,10 @@ TypeScript SDK: session lifecycle, auth, frontend tools, LiveKit transport. Docs
 
 ## Branches
 
-Default `main`. Keep public API stable; document breaking changes for the docs automation (SCE-560).
+Day-to-day on `main`. Promote by pushing `main` → `staging` (deploys staging) or to `production` (deploys prod).
+PRs are optional while solo — use them for risky / large changes or agent-opened review; otherwise commit on `main` then promote.
+Never force-push `main` / `staging` / `production`. Never point agents at production secrets.
+
 
 ## Cursor Cloud specific instructions
 
