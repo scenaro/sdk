@@ -17,6 +17,8 @@ export interface CollectionItemContext {
   selected?: string[];
   used?: string[];
   prefetch?: string[];
+  /** Reject the update if a required packet cannot be loaded or published. */
+  throwOnError?: boolean;
 }
 interface Ack {
   cached?: Record<string, string>;
@@ -84,7 +86,7 @@ export class CollectionItemContextBridge {
       ...this.used,
       ...this.visible,
       ...(context.prefetch ?? []).slice(0, 4),
-    ]);
+    ], context.throwOnError);
   }
   async resync() {
     this.accepted.clear();
@@ -112,6 +114,17 @@ export class CollectionItemContextBridge {
       this.sequence = Math.max(this.sequence, ack.sequence);
   }
   async need(ids: string[]) {
+    // An empty request is discovery: resend the known index and its packets.
+    // Keep UI navigation intact; discovery does not select a product.
+    if (!ids.length) {
+      ids = Array.from(new Set([
+        ...this.selected, ...this.used, ...this.visible, ...this.index.keys(),
+      ])).slice(0, 32);
+      await this.sync();
+      for (const id of ids) this.accepted.delete(id);
+      await this.preload(ids);
+      return;
+    }
     for (const id of ids) {
       this.accepted.delete(id);
       const item = this.index.get(id);
@@ -123,7 +136,7 @@ export class CollectionItemContextBridge {
     const p = JSON.parse(atob(packet.payload));
     return String(p.revision);
   }
-  private async preload(ids: string[]) {
+  private async preload(ids: string[], throwOnError = false) {
     const unique = Array.from(new Set(ids)).slice(0, 32);
     const generation = this.generation;
     // At most three HTTP reads at once; stale speculative jobs are abandoned.
@@ -138,12 +151,12 @@ export class CollectionItemContextBridge {
           !this.used.includes(id)
         )
           continue;
-        await this.load(id);
+        await this.load(id, throwOnError);
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
   }
-  private async load(id: string) {
+  private async load(id: string, throwOnError = false) {
     if (this.inflight.has(id)) return this.inflight.get(id)!;
     const task = (async () => {
       let item = this.index.get(id);
@@ -187,6 +200,7 @@ export class CollectionItemContextBridge {
       await task;
     } catch (e) {
       this.onError(e);
+      if (throwOnError) throw e;
     } finally {
       this.inflight.delete(id);
     }
