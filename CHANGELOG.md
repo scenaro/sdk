@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- Republish the known collection index and sealed packets on an empty `items:need` discovery request.
+- Allow product tools to require successful packet loading and publication with `throwOnError` on `updateCollectionItemContext`.
+
 ## 0.4.3
 
 - Expose `setSessionControl` on `useScenaroSession` (discrete/dictation/manual audio, exchange mode, mode-switch handoff).

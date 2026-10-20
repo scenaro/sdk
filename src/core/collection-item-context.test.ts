@@ -112,14 +112,52 @@ it("session reconnect restores active item packets and requests fresh configurat
 
 it('keeps independent collection navigation and only preloads referenced collections', async()=>{
  const {CollectionItemContextManager}=await import('./collection-item-context');
- const sent:any[]=[];
- const manager=new CollectionItemContextManager({request:vi.fn()} as any,async(topic,data)=>{sent.push({topic,...data})},()=>{});
+ const sent: Array<{topic: string; state?: {collection_id: number; available: {id: string}[]}}> = [];
+ const manager=new CollectionItemContextManager({request:vi.fn()} as unknown as ScenaroClient,async(topic,data)=>{sent.push({topic,...data})},()=>{});
  await manager.update({collectionId:12,items:[item],visible:[]});
  await manager.configure(7,[12,13]);
  await manager.update({collectionId:13,items:[{id:'c',collection_id:13,agent_item:packet}],visible:[]});
  await manager.update({collectionId:14,items:[{id:'x',collection_id:14}],visible:['x']});
  const states=sent.filter(s=>s.state).map(s=>s.state);
- expect(states.map(s=>s.collection_id)).toEqual([12,13,13]);
- expect(states.find(s=>s.collection_id===12).available).toEqual([{id:'a'}]);
- expect(states[states.length-1].available).toEqual([{id:'c'}]);
+ expect(states.map(s=>s!.collection_id)).toEqual([12,13,13]);
+ expect(states.find(s=>s!.collection_id===12)!.available).toEqual([{id:'a'}]);
+ expect(states[states.length-1]!.available).toEqual([{id:'c'}]);
+});
+
+it('empty need republishes the known index and sealed packets without changing navigation', async () => {
+ const request=vi.fn(), publish=vi.fn().mockResolvedValue(undefined);
+ const bridge=new CollectionItemContextBridge({request} as unknown as ScenaroClient,publish,()=>{});
+ await bridge.configure(7,12);
+ await bridge.update({collectionId:12,items:[item],visible:[],selected:[],used:[]});
+ bridge.acknowledge({cached:{a:'r1'}});
+ publish.mockClear();
+ await bridge.need([]);
+ expect(publish.mock.calls[0]).toEqual(['items:sync',{state:{collection_id:12,sequence:3,available:[{id:'a'}],visible:[],selected:[],used:[]}}]);
+ expect(publish.mock.calls[1]).toEqual(['items:sync',{packets:[packet]}]);
+ expect(request).not.toHaveBeenCalled();
+});
+
+it('empty need reloads missing sealed data only in the requested collection', async () => {
+ const {CollectionItemContextManager}=await import('./collection-item-context');
+ const request=vi.fn().mockResolvedValue(item), publish=vi.fn().mockResolvedValue(undefined);
+ const manager=new CollectionItemContextManager({request} as unknown as ScenaroClient,publish,()=>{});
+ await manager.configure(7,[12,13]);
+ await manager.update({collectionId:12,items:[{id:'a',collection_id:12}]});
+ await manager.update({collectionId:13,items:[{id:'b',collection_id:13}]});
+ publish.mockClear();
+ await manager.need([],[12]);
+ expect(request).toHaveBeenCalledOnce();
+ expect(request.mock.calls[0][0]).toContain('/collections/12/items/a');
+ expect(publish.mock.calls.filter(c=>c[1].state).map(c=>c[1].state.collection_id)).toEqual([12]);
+ expect(publish.mock.calls.some(c=>c[1].packets)).toBe(true);
+});
+
+it('a tool can require packet delivery and receive a failed preload as an error', async () => {
+ const error=new Error('packet delivery failed');
+ const publish=vi.fn(async (_topic:string,data:Record<string,unknown>)=>{if(data.packets)throw error;});
+ const onError=vi.fn();
+ const bridge=new CollectionItemContextBridge({request:vi.fn()} as unknown as ScenaroClient,publish,onError);
+ await bridge.configure(7,12);
+ await expect(bridge.update({collectionId:12,items:[item],selected:['a'],throwOnError:true})).rejects.toThrow('packet delivery failed');
+ expect(onError).toHaveBeenCalledWith(error);
 });

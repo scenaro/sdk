@@ -1,6 +1,6 @@
 {
   "name": "@scenaro/sdk",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Scenaro SDK \u2014 protocol, client, and React hooks for voice experiences over a realtime transport (LiveKit today)",
   "type": "module",
   "main": "./dist/index.js",
