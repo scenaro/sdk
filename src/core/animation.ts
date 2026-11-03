@@ -2,7 +2,10 @@
 export interface AnimationConfig {
   schema_version: 1;
   key: string;
-  interval_ms: number;
+  /** Minimum new words between streaming checks; defaults to 5. */
+  min_new_words?: number;
+  /** Deprecated legacy field; ignored by the word-based scheduler. */
+  interval_ms?: number;
   questions: Record<string, { type: "noul"; instructions: string }>;
   ui: {
     activation_threshold: number;
