@@ -7,6 +7,8 @@
 export type TransportConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 export interface TransportDataMessage {
+  /** Set by the transport only for an authenticated agent participant. */
+  fromAgent?: boolean;
   topic: string;
   payload: Uint8Array;
 }
@@ -14,6 +16,7 @@ export interface TransportDataMessage {
 export type TransportToolRpcHandler = (payload: string) => Promise<string>;
 
 export interface Transport {
+  callAgent?(method: string, payload: string): Promise<string>;
   connect(url: string, token: string): Promise<void>;
   disconnect(): Promise<void>;
   setMicrophoneEnabled(enabled: boolean): Promise<void>;

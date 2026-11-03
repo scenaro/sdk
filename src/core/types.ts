@@ -80,6 +80,8 @@ export interface ScenaroSessionEvents {
   'agent-state': (state: AgentState) => void;
   message: (message: ConversationMessage) => void;
   config: (config: SessionConfig) => void;
+  'animation-result': (result: import('./animation').AnimationResult) => void;
+  'animation-error': (error: import('./animation').AnimationError) => void;
   'session-end': (info: SessionEndInfo) => void;
   error: (error: ScenaroError) => void;
 }

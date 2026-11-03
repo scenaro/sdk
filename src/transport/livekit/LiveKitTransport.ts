@@ -68,6 +68,12 @@ export class LiveKitTransport implements Transport {
     await this.room.localParticipant.publishData(payload, { topic, reliable:true });
   }
 
+  async callAgent(method: string, payload: string): Promise<string> {
+    const agents = Array.from(this.room.remoteParticipants.values()).filter(isAgentParticipant);
+    if (agents.length !== 1) throw new Error('A single connected agent is required');
+    return this.room.localParticipant.performRpc({destinationIdentity: agents[0].identity, method, payload, responseTimeout: 5000});
+  }
+
   registerToolHandler(name: string, handler: TransportToolRpcHandler): void {
     this.room.registerRpcMethod(name, async (data) => handler(data.payload));
   }
@@ -81,8 +87,8 @@ export class LiveKitTransport implements Transport {
   }
 
   onData(handler: (message: TransportDataMessage) => void): () => void {
-    const listener = (payload: Uint8Array, _participant?: unknown, _kind?: unknown, topic?: string) => {
-      handler({ topic: topic ?? '', payload });
+    const listener = (payload: Uint8Array, participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
+      handler({ topic: topic ?? '', payload, fromAgent: !!participant && isAgentParticipant(participant) });
     };
     this.room.on(RoomEvent.DataReceived, listener);
     return () => this.room.off(RoomEvent.DataReceived, listener);

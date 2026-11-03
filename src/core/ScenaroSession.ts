@@ -9,6 +9,7 @@ import {
   type ConversationMessage,
 } from '../protocol';
 import { LiveKitTransport } from '../transport/livekit';
+import { readAnimationConfig, type AnimationResult, type AnimationError } from './animation';
 import { TypedEmitter } from './emitter';
 import { ScenaroError, type ScenaroErrorCode } from './errors';
 import type { Transport } from './transport';
@@ -112,6 +113,7 @@ export class ScenaroSession {
   private _rawConfig: ConfigPayload | null = null;
   private _conversationId: string | null = null;
   private _suppressRecap = false;
+  private animation: { id: string; key: string; sequence: number } | null = null;
 
   constructor(options: ScenaroSessionOptions = {}) {
     if (!options.client && !options.apiUrl) {
@@ -324,6 +326,31 @@ export class ScenaroSession {
     );
   }
 
+  /** The UI owns activation timing and cumulative state. Observation is off by default. */
+  async startAnimation(featureKey: string): Promise<string> {
+    if (this._status !== 'connected' || !this.transport.callAgent) throw new ScenaroError('AGENT_UNAVAILABLE', 'Animation requires a connected agent');
+    if (!this._config?.features.some(f => readAnimationConfig(f.settings)?.key === featureKey)) throw new Error('Unknown animation feature');
+    const id = makeClientEventId('animation');
+    this.animation = {id, key: featureKey, sequence: 0};
+    try {
+      const reply = JSON.parse(await this.transport.callAgent('animation.control', JSON.stringify({feature_key: featureKey, activation_id: id, active: true}))) as {ok?: boolean; activation_id?: string};
+      if (reply.ok !== true || reply.activation_id !== id) throw new Error('Animation start rejected');
+      return id;
+    } catch (error) {
+      if (this.animation?.id === id) this.animation = null;
+      throw error;
+    }
+  }
+
+  async stopAnimation(activationId: string): Promise<void> {
+    const current = this.animation;
+    if (!current || current.id !== activationId) return;
+    this.animation = null;
+    if (!this.transport.callAgent) return;
+    const reply = JSON.parse(await this.transport.callAgent('animation.control', JSON.stringify({feature_key: current.key, activation_id: current.id, active: false}))) as {ok?: boolean};
+    if (reply.ok !== true) throw new Error('Animation stop rejected');
+  }
+
   async updateCollectionItemContext(context: CollectionItemContext): Promise<void> {await this.itemContext.update(context)}
 
   async updateExperienceState(experienceState: Record<string, unknown>): Promise<void> {
@@ -385,6 +412,7 @@ export class ScenaroSession {
   }
 
   private setStatus(status: SessionStatus): void {
+    if (status !== "connected") this.animation = null;
     if (this._status === status) return;
     this._status = status;
     this.emitter.emit('status-change', status);
@@ -472,10 +500,11 @@ export class ScenaroSession {
 
   private bindTransport(): void {
     this.transportUnsubscribers.push(
-      this.transport.onData((message) => this.handleDataMessage(message.topic, message.payload)),
+      this.transport.onData((message) => this.handleDataMessage(message.topic, message.payload, message.fromAgent)),
       this.transport.onAgentStateChange((raw) => this.setAgentState(toAgentState(raw))),
       this.transport.onAgentPresenceChange((present) => this.handleAgentPresenceChange(present)),
       this.transport.onConnectionStateChange((state) => {
+        if (state !== 'connected') this.animation = null;
         if (state === 'disconnected' && (this._status === 'connected' || this._status === 'reconnecting')) {
           this._config = null;
           this._rawConfig = null;
@@ -509,7 +538,25 @@ export class ScenaroSession {
     }, AGENT_DISCONNECT_GRACE_MS);
   }
 
-  private handleDataMessage(topic: string, payload: Uint8Array): void {
+  private handleDataMessage(topic: string, payload: Uint8Array, fromAgent = false): void {
+    if (topic === 'animation:result' || topic === 'animation:error') {
+      if (!fromAgent || !this.animation) return;
+      const result = this.decodeJson<AnimationResult & AnimationError>(payload);
+      const current = this.animation;
+      if (!result || result.activation_id !== current.id || result.feature_key !== current.key || !Number.isSafeInteger(result.sequence) || result.sequence <= current.sequence) return;
+      if (topic === 'animation:error') {
+        if (typeof result.code !== 'string') return;
+        current.sequence = result.sequence;
+        this.emitter.emit('animation-error', result);
+        return;
+      }
+      const config = this._config?.features.map(f => readAnimationConfig(f.settings)).find(c => c?.key === current.key);
+      const answers = result.answers;
+      if (!config || !answers || Object.keys(answers).length !== Object.keys(config.questions).length || Object.keys(config.questions).some(id => !answers[id] || answers[id].type !== 'noul' || !Number.isFinite(answers[id].noul) || answers[id].noul < 0 || answers[id].noul > 1)) return;
+      current.sequence = result.sequence;
+      this.emitter.emit('animation-result', result);
+      return;
+    }
     if (!topic) return;
 
     if (topic === 'items:ack') {const ack=this.decodeJson<{cached?:Record<string,string>;sequence?:number}>(payload);if(ack)this.itemContext.acknowledge(ack);return}

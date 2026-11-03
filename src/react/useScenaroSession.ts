@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AnimationResult, AnimationError } from '../core/animation';
 import { ScenaroError } from '../core/errors';
 import type {
   AgentState,
@@ -16,6 +17,8 @@ import { useScenaro } from './ScenaroProvider';
 
 export interface UseScenaroSessionOptions extends Omit<StartSessionOptions, 'tools'> {
   tools?: Record<string, ToolHandler>;
+  onAnimationResult?: (result: AnimationResult) => void;
+  onAnimationError?: (error: AnimationError) => void;
   onMessage?: (message: ConversationMessage) => void;
   onError?: (error: ScenaroError) => void;
   onSessionEnd?: (info: SessionEndInfo) => void;
@@ -32,6 +35,8 @@ export interface UseScenaroSessionReturn {
   conversationId: string | null;
   start: (overrides?: Partial<StartSessionOptions>) => Promise<void>;
   end: () => Promise<void>;
+  startAnimation: (featureKey: string) => Promise<string>;
+  stopAnimation: (activationId: string) => Promise<void>;
   sendText: (text: string) => Promise<void>;
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
   setSessionControl: (options: {
@@ -85,6 +90,10 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
       optionsRef.current.onError?.(next);
     };
 
+    const onAnimationResult = (result: AnimationResult) => optionsRef.current.onAnimationResult?.(result);
+    const onAnimationError = (error: AnimationError) => optionsRef.current.onAnimationError?.(error);
+    session.on('animation-result', onAnimationResult);
+    session.on('animation-error', onAnimationError);
     session.on('status-change', onStatusChange);
     session.on('agent-state', onAgentState);
     session.on('message', onMessage);
@@ -93,6 +102,8 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
     session.on('error', onError);
 
     return () => {
+      session.off('animation-result', onAnimationResult);
+      session.off('animation-error', onAnimationError);
       session.off('status-change', onStatusChange);
       session.off('agent-state', onAgentState);
       session.off('message', onMessage);
@@ -118,6 +129,8 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
     [session],
   );
 
+  const startAnimation = useCallback((key: string) => session.startAnimation(key), [session]);
+  const stopAnimation = useCallback((id: string) => session.stopAnimation(id), [session]);
   const end = useCallback(() => session.end(), [session]);
   const sendText = useCallback((text: string) => session.sendText(text), [session]);
   const setMicrophoneEnabled = useCallback((enabled: boolean) => session.setMicrophoneEnabled(enabled), [session]);
@@ -136,6 +149,8 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
     conversationId,
     start,
     end,
+    startAnimation,
+    stopAnimation,
     sendText,
     setMicrophoneEnabled,
     setSessionControl,
