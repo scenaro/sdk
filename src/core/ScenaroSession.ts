@@ -253,6 +253,9 @@ export class ScenaroSession {
       // guard restart-after-end (or start() called twice) from crashing on stale registrations.
       this.unregisterTools();
       this.registerTools(tools);
+      // React StrictMode may run the provider cleanup before a user starts.
+      // Restore the transport subscriptions released by that cleanup.
+      this.bindTransport();
       await this.transport.connect(livekitUrl, livekitToken);
 
       void this.transport.publishData(DATA_TOPICS.CONFIG_REQUEST, { requestedAt: Date.now() });
@@ -499,6 +502,7 @@ export class ScenaroSession {
   }
 
   private bindTransport(): void {
+    if (this.transportUnsubscribers.length > 0) return;
     this.transportUnsubscribers.push(
       this.transport.onData((message) => this.handleDataMessage(message.topic, message.payload, message.fromAgent)),
       this.transport.onAgentStateChange((raw) => this.setAgentState(toAgentState(raw))),

@@ -51,8 +51,8 @@ export function ScenaroProvider({
     return { client, events: new ScenaroEventBus(), session: new ScenaroSession({ client }) };
   }, [clientProp, apiUrl, storagePrefix, storage, apiPathPrefix]);
 
-  // Releases the session's transport listeners/timers whenever it's replaced or the
-  // provider unmounts — `value.session` is a fresh instance every time this effect reruns.
+  // Release resources on replacement/unmount. In StrictMode the same session
+  // survives the simulated cleanup; start() restores its transport subscriptions.
   useEffect(() => () => value.session.destroy(), [value.session]);
 
   return (
