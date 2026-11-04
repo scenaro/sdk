@@ -3,6 +3,7 @@ export {
   type ScenarioEventBehavior,
   type ScenaroSessionOptions,
 } from './ScenaroSession';
+export * from './animation';
 export { ScenaroError, type ScenaroErrorCode } from './errors';
 export type {
   AgentState,

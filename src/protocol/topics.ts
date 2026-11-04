@@ -1,6 +1,7 @@
 /** Data channel topics (agent ↔ frontend contract). */
 export const DATA_TOPICS = {
   CONFIG: 'config',
+  CONFIG_CHUNK: 'config:chunk',
   CONFIG_ACK: 'config_ack',
   CONFIG_REQUEST: 'config_request',
   MESSAGE_NEW: 'message:new',
