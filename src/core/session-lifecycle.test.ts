@@ -43,6 +43,23 @@ describe('session lifecycle after provider cleanup', () => {
     expect(session.rawConfig).toEqual(payload);
     expect(configHandler).toHaveBeenCalledTimes(1);
     expect(listeners.size).toBe(1);
+    const largeConfig = { ...payload, collections: [{ id: 98, description: '🍷é'.repeat(20_000) }] };
+    const text = JSON.stringify(largeConfig);
+    const parts = Array.from({ length: Math.ceil(text.length / 10_000) }, (_, i) =>
+      text.slice(i * 10_000, (i + 1) * 10_000));
+    const receiveChunk = (index: number, fromAgent: boolean) => {
+      const chunk = { id: 'large', index, total: parts.length, part: parts[index] };
+      for (const receive of listeners) receive({
+        topic: 'config:chunk', fromAgent, payload: new TextEncoder().encode(JSON.stringify(chunk)),
+      });
+    };
+    for (let index = parts.length - 1; index > 0; index--) receiveChunk(index, true);
+    receiveChunk(0, false);
+    expect(session.rawConfig).toEqual(payload);
+    expect(configHandler).toHaveBeenCalledTimes(1);
+    receiveChunk(0, true);
+    expect(session.rawConfig).toEqual(largeConfig);
+    expect(configHandler).toHaveBeenCalledTimes(2);
     await session.end();
     await start();
     expect(listeners.size).toBe(1);

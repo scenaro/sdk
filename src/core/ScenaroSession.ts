@@ -10,6 +10,7 @@ import {
 } from '../protocol';
 import { LiveKitTransport } from '../transport/livekit';
 import { readAnimationConfig, type AnimationResult, type AnimationError } from './animation';
+import { ConfigAssembly } from './config-assembly';
 import { TypedEmitter } from './emitter';
 import { ScenaroError, type ScenaroErrorCode } from './errors';
 import type { Transport } from './transport';
@@ -111,6 +112,7 @@ export class ScenaroSession {
   private _config: SessionConfig | null = null;
   /** Wire payload backing `_config` — kept for tool-context resolution only, never exposed publicly. */
   private _rawConfig: ConfigPayload | null = null;
+  private readonly configAssembly = new ConfigAssembly();
   private _conversationId: string | null = null;
   private _suppressRecap = false;
   private animation: { id: string; key: string; sequence: number } | null = null;
@@ -508,7 +510,10 @@ export class ScenaroSession {
       this.transport.onAgentStateChange((raw) => this.setAgentState(toAgentState(raw))),
       this.transport.onAgentPresenceChange((present) => this.handleAgentPresenceChange(present)),
       this.transport.onConnectionStateChange((state) => {
-        if (state !== 'connected') this.animation = null;
+        if (state !== 'connected') {
+          this.animation = null;
+          this.configAssembly.clear();
+        }
         if (state === 'disconnected' && (this._status === 'connected' || this._status === 'reconnecting')) {
           this._config = null;
           this._rawConfig = null;
@@ -582,9 +587,13 @@ export class ScenaroSession {
       return;
     }
 
-    if (topic === DATA_TOPICS.CONFIG) {
-      const rawConfig = this.decodeJson<ConfigPayload>(payload);
+    if (topic === DATA_TOPICS.CONFIG || topic === DATA_TOPICS.CONFIG_CHUNK) {
+      if (topic === DATA_TOPICS.CONFIG_CHUNK && !fromAgent) return;
+      const rawConfig = topic === DATA_TOPICS.CONFIG_CHUNK
+        ? this.configAssembly.add(this.decodeJson<unknown>(payload))
+        : this.decodeJson<ConfigPayload>(payload);
       if (!rawConfig) return;
+      this.configAssembly.clear();
       void this.transport.publishData(DATA_TOPICS.CONFIG_ACK, {
         acknowledged: true,
         timestamp: Date.now(),
