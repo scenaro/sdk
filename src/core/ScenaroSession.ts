@@ -193,6 +193,9 @@ export class ScenaroSession {
       await requestMicrophoneAccess();
     }
 
+    this.configAssembly.clear();
+    this._config = null;
+    this._rawConfig = null;
     this.setStatus('connecting');
 
     try {
@@ -291,6 +294,7 @@ export class ScenaroSession {
 
   /** Releases transport listeners and timers. Call when the owning provider unmounts. */
   destroy(): void {
+    this.configAssembly.clear();
     this.itemContext.clear();
     this.transportUnsubscribers.forEach((unsubscribe) => unsubscribe());
     this.transportUnsubscribers.length = 0;

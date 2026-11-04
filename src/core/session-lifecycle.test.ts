@@ -62,6 +62,7 @@ describe('session lifecycle after provider cleanup', () => {
     expect(configHandler).toHaveBeenCalledTimes(2);
     await session.end();
     await start();
+    expect(session.rawConfig).toBeNull();
     expect(listeners.size).toBe(1);
     session.destroy();
     expect(listeners.size).toBe(0);

@@ -72,7 +72,13 @@ export function useScenaroSession(options: UseScenaroSessionOptions): UseScenaro
   optionsRef.current = options;
 
   useEffect(() => {
-    const onStatusChange = (next: SessionStatus) => setStatus(next);
+    const onStatusChange = (next: SessionStatus) => {
+      setStatus(next);
+      if (next === 'connecting') {
+        setConfig(null);
+        setRawConfig(null);
+      }
+    };
     const onAgentState = (next: AgentState) => setAgentState(next);
     const onMessage = (message: ConversationMessage) => {
       setMessages((prev) => [...prev, message]);
